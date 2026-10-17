@@ -7,6 +7,7 @@ import { listInvocations } from "@/lib/api";
 import type { Invocation } from "@/lib/types";
 import { networkFilter, useNetwork } from "@/lib/network";
 import { TableSkeleton } from "@/components/Skeleton";
+import { useUrlSearchParams } from "@/hooks/useUrlSearchParams";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -139,20 +140,30 @@ const COLUMNS: Column<Invocation>[] = [
 
 export default function InvocationsPage() {
   const { network } = useNetwork();
+  const [searchParams, updateSearchParams] = useUrlSearchParams();
+  const search = searchParams.toString();
+  const previousSearch = useRef(search);
+  const readFilters = (params: URLSearchParams): Filters => ({
+    contractId: params.get("contract_id") ?? "",
+    fn: params.get("fn") ?? "",
+    since: params.get("since") ?? "",
+    until: params.get("until") ?? "",
+  });
+  const cursorStack = searchParams.getAll("cursor");
+  const cursor = cursorStack[cursorStack.length - 1] ?? null;
 
   // Data state
   const [invocations, setInvocations] = useState<Invocation[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
 
-  // Pagination: stack of cursors, index 0 is the first page.
-  const [cursors, setCursors] = useState<(string | null)[]>([null]);
-  const [cursorIndex, setCursorIndex] = useState(0);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
 
   // Filter inputs (draft) and the applied filter set the request uses.
-  const [draft, setDraft] = useState<Filters>(EMPTY_FILTERS);
-  const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
+  const [draft, setDraft] = useState<Filters>(() => readFilters(searchParams));
+  const [filters, setFilters] = useState<Filters>(() =>
+    readFilters(searchParams)
+  );
 
   // Sort state. The API returns newest first, which is the default order.
   const [sortColumn, setSortColumn] = useState("ledger_closed_at");
@@ -160,6 +171,14 @@ export default function InvocationsPage() {
 
   // Only the most recent load may write to state.
   const loadSeq = useRef(0);
+
+  useEffect(() => {
+    if (previousSearch.current === search) return;
+    previousSearch.current = search;
+    const next = readFilters(new URLSearchParams(search));
+    setFilters(next);
+    setDraft(next);
+  }, [search]);
 
   const load = useCallback(
     async (cursor: string | null) => {
@@ -194,55 +213,66 @@ export default function InvocationsPage() {
   );
 
   useEffect(() => {
-    load(cursors[cursorIndex]);
-  }, [load, cursors, cursorIndex]);
+    load(cursor);
+  }, [load, cursor]);
 
   // Reset to the first page when the global network selector changes.
   const prevNetwork = useRef(network);
   useEffect(() => {
     if (prevNetwork.current !== network) {
       prevNetwork.current = network;
-      setCursors([null]);
-      setCursorIndex(0);
+      updateSearchParams((params) => params.delete("cursor"), true);
     }
-  }, [network]);
+  }, [network, updateSearchParams]);
 
   // ---------------------------------------------------------------------------
   // Handlers
   // ---------------------------------------------------------------------------
 
-  const resetToFirstPage = () => {
-    setCursors([null]);
-    setCursorIndex(0);
-  };
-
   const handleApply = (e: React.FormEvent) => {
     e.preventDefault();
-    setFilters({
+    const next = {
       contractId: draft.contractId.trim(),
       fn: draft.fn.trim(),
       since: draft.since,
       until: draft.until,
+    };
+    setFilters(next);
+    updateSearchParams((params) => {
+      for (const [key, value] of Object.entries({
+        contract_id: next.contractId,
+        fn: next.fn,
+        since: next.since,
+        until: next.until,
+      })) {
+        if (value) params.set(key, value);
+        else params.delete(key);
+      }
+      params.delete("cursor");
     });
-    resetToFirstPage();
   };
 
   const handleClear = () => {
     setDraft(EMPTY_FILTERS);
     setFilters(EMPTY_FILTERS);
-    resetToFirstPage();
+    updateSearchParams((params) => {
+      for (const key of ["contract_id", "fn", "since", "until", "cursor"])
+        params.delete(key);
+    });
   };
 
   const handleNext = () => {
     if (!nextCursor) return;
-    const newCursors = [...cursors.slice(0, cursorIndex + 1), nextCursor];
-    setCursors(newCursors);
-    setCursorIndex(cursorIndex + 1);
+    updateSearchParams((params) => params.append("cursor", nextCursor));
   };
 
   const handlePrev = () => {
-    if (cursorIndex === 0) return;
-    setCursorIndex(cursorIndex - 1);
+    if (cursorStack.length === 0) return;
+    updateSearchParams((params) => {
+      const cursors = params.getAll("cursor");
+      params.delete("cursor");
+      cursors.slice(0, -1).forEach((value) => params.append("cursor", value));
+    });
   };
 
   const handleSort = (col: string) => {
@@ -277,7 +307,7 @@ export default function InvocationsPage() {
   });
 
   const filtersActive = hasActiveFilters(filters);
-  const isFirstPage = cursorIndex === 0;
+  const isFirstPage = cursorStack.length === 0;
   const isLastPage = !nextCursor;
 
   // ---------------------------------------------------------------------------
@@ -440,7 +470,7 @@ export default function InvocationsPage() {
       {!loading && invocations.length > 0 && (
         <div className="flex items-center justify-between">
           <span className="text-xs text-[var(--color-text-secondary)]">
-            Page {cursorIndex + 1}
+            Page {cursorStack.length + 1}
             {sortColumn !== "ledger_closed_at" && (
               <span className="ml-2 opacity-80">
                 (sorting applies to the current page)

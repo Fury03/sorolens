@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Image from "next/image";
 import { ContractChangelog, CopyButton } from "@sorolens/ui";
 import type { ContractVersionEntry } from "@sorolens/ui";
 import {
@@ -100,8 +101,13 @@ export function ContractChangelogPanel({
           rel="noopener noreferrer"
           aria-label="Wasm hash badge"
         >
-          {/* eslint-disable-next-line @next/next/no-img-element -- external SVG badge */}
-          <img src={badgeUrl} alt="Wasm hash badge" height={20} />
+          <Image
+            src={badgeUrl}
+            alt="Wasm hash badge"
+            width={120}
+            height={20}
+            unoptimized
+          />
         </a>
         <CopyButton text={badgeMarkdown} label="Copy badge Markdown" />
       </div>

@@ -199,9 +199,8 @@ jobs:
   # Next.js dashboard build
   # ------------------------------------------------------------
   next-build:
-    name: Next.js build
+    name: Next.js build and Lighthouse budgets
     runs-on: ubuntu-latest
-    if: ${{ false }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -232,6 +231,18 @@ jobs:
           # at build time. Real values are set in Vercel project settings.
           NEXT_PUBLIC_API_URL: http://localhost:8080
         run: pnpm build
+      - name: Run Lighthouse CI budgets
+        working-directory: apps/web
+        env:
+          NEXT_PUBLIC_API_URL: http://localhost:8080
+        run: pnpm exec lhci autorun --config=lighthouserc.json
+      - name: Upload Lighthouse reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lighthouse-reports
+          path: apps/web/.lighthouseci
+          if-no-files-found: ignore
   # ------------------------------------------------------------
   # Rust: fixture contract
   # ------------------------------------------------------------

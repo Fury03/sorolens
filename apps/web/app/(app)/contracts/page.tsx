@@ -10,7 +10,8 @@ import {
 } from "react";
 import type { FormEvent, ReactNode } from "react";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
+import { useUrlSearchParams } from "@/hooks/useUrlSearchParams";
 import { DataTable, Toast } from "@sorolens/ui";
 import type { Column } from "@sorolens/ui";
 import { LabelledId } from "@/components/LabelledId";
@@ -404,22 +405,23 @@ function ContractsPageInner() {
   // Sort state is derived from the URL and written back on change, so a
   // sorted view is shareable via its query string (#175).
   const router = useRouter();
-  const searchParams = useSearchParams();
+  const [urlParams, updateUrlParams] = useUrlSearchParams();
+  const query = urlParams.toString();
+  const previousQuery = useRef(query);
   const [sortColumn, setSortColumn] = useState<string>(
-    () => searchParams?.get(SORT_PARAM) ?? DEFAULT_SORT_COLUMN
+    () => urlParams.get(SORT_PARAM) ?? DEFAULT_SORT_COLUMN
   );
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">(() =>
-    searchParams?.get(DIR_PARAM) === "asc" ? "asc" : DEFAULT_SORT_DIRECTION
+    urlParams.get(DIR_PARAM) === "asc" ? "asc" : DEFAULT_SORT_DIRECTION
   );
-  // Pagination state: stack of cursors, index 0 = first page
-  const [cursors, setCursors] = useState<(string | null)[]>([null]);
-  const [cursorIndex, setCursorIndex] = useState(0);
+  const cursorStack = urlParams.getAll("cursor");
+  const cursor = cursorStack[cursorStack.length - 1] ?? null;
 
   // Search state
-  const [search, setSearch] = useState("");
+  const [search, setSearch] = useState(urlParams.get("q") ?? "");
 
   // Tag filter state (server-side, combined with the network filter)
-  const [tagFilter, setTagFilter] = useState("");
+  const [tagFilter, setTagFilter] = useState(urlParams.get("tag") ?? "");
 
   // CSV import state
   const [showImport, setShowImport] = useState(false);
@@ -440,6 +442,18 @@ function ContractsPageInner() {
   } | null>(null);
   const toastSeq = useRef(0);
   const dismissToast = useCallback(() => setToast(null), []);
+
+  useEffect(() => {
+    if (previousQuery.current === query) return;
+    previousQuery.current = query;
+    const params = new URLSearchParams(query);
+    setSearch(params.get("q") ?? "");
+    setTagFilter(params.get("tag") ?? "");
+    setSortColumn(params.get(SORT_PARAM) ?? DEFAULT_SORT_COLUMN);
+    setSortDirection(
+      params.get(DIR_PARAM) === "asc" ? "asc" : DEFAULT_SORT_DIRECTION
+    );
+  }, [query]);
 
   // Paste-to-add contract (#178). Pasting a valid Soroban contract id anywhere
   // on the page surfaces a "Track this contract?" toast whose Confirm routes to
@@ -492,7 +506,7 @@ function ContractsPageInner() {
   // duplicate requests for the same query are de-duplicated. When the API is
   // unreachable `data` stays undefined, which falls through to the empty state.
   const { data, isLoading, mutate } = useContracts({
-    cursor: cursors[cursorIndex] ?? undefined,
+    cursor: cursor ?? undefined,
     limit: PAGE_SIZE,
     network: networkFilter(network),
     tag: tagFilter || undefined,
@@ -515,10 +529,9 @@ function ContractsPageInner() {
     if (networkChanged || tagChanged) {
       prevNetwork.current = network;
       prevTag.current = tagFilter;
-      setCursors([null]);
-      setCursorIndex(0);
+      updateUrlParams((params) => params.delete("cursor"), true);
     }
-  }, [network, tagFilter]);
+  }, [network, tagFilter, updateUrlParams]);
 
   // Reset to the first page when the sort changes, because an in-flight
   // cursor was produced in the previous order and no longer points at the
@@ -528,24 +541,26 @@ function ContractsPageInner() {
     const key = `${sortColumn}:${sortDirection}`;
     if (prevSort.current !== key) {
       prevSort.current = key;
-      setCursors([null]);
-      setCursorIndex(0);
+      updateUrlParams((params) => params.delete("cursor"), true);
     }
-  }, [sortColumn, sortDirection]);
+  }, [sortColumn, sortDirection, updateUrlParams]);
 
   // Mirror the active sort into the URL so the view is shareable. The guard
   // only writes when the URL differs, so visiting /contracts without sort
   // params does not rewrite the URL on mount.
   useEffect(() => {
-    const params = new URLSearchParams(searchParams?.toString() ?? "");
+    const params = new URLSearchParams(urlParams.toString());
     const current = params.get(SORT_PARAM) ?? DEFAULT_SORT_COLUMN;
     const currentDir =
       params.get(DIR_PARAM) === "asc" ? "asc" : DEFAULT_SORT_DIRECTION;
     if (current === sortColumn && currentDir === sortDirection) return;
     params.set(SORT_PARAM, sortColumn);
     params.set(DIR_PARAM, sortDirection);
-    router.replace(`?${params.toString()}`);
-  }, [sortColumn, sortDirection, router, searchParams]);
+    updateUrlParams((current) => {
+      current.set(SORT_PARAM, sortColumn);
+      current.set(DIR_PARAM, sortDirection);
+    }, true);
+  }, [sortColumn, sortDirection, urlParams, updateUrlParams]);
 
   // ---------------------------------------------------------------------------
   // Pagination handlers
@@ -554,14 +569,16 @@ function ContractsPageInner() {
   const handleNext = () => {
     if (!hasMore || contracts.length === 0) return;
     const nextCursor = contracts[contracts.length - 1].id;
-    const newCursors = [...cursors.slice(0, cursorIndex + 1), nextCursor];
-    setCursors(newCursors);
-    setCursorIndex(cursorIndex + 1);
+    updateUrlParams((params) => params.append("cursor", nextCursor));
   };
 
   const handlePrev = () => {
-    if (cursorIndex === 0) return;
-    setCursorIndex(cursorIndex - 1);
+    if (cursorStack.length === 0) return;
+    updateUrlParams((params) => {
+      const cursors = params.getAll("cursor");
+      params.delete("cursor");
+      cursors.slice(0, -1).forEach((value) => params.append("cursor", value));
+    });
   };
 
   // ---------------------------------------------------------------------------
@@ -669,7 +686,7 @@ function ContractsPageInner() {
     return sortDirection === "asc" ? cmp : -cmp;
   });
 
-  const isFirstPage = cursorIndex === 0;
+  const isFirstPage = cursorStack.length === 0;
   const isLastPage = !hasMore;
 
   // ---------------------------------------------------------------------------
@@ -677,8 +694,7 @@ function ContractsPageInner() {
   // ---------------------------------------------------------------------------
 
   const handleTrackSuccess = () => {
-    setCursors([null]);
-    setCursorIndex(0);
+    updateUrlParams((params) => params.delete("cursor"), true);
     // Revalidate the visible page so a newly tracked/imported contract shows
     // up even when we were already on page 1 (the SWR key does not change).
     void mutate();
@@ -717,8 +733,17 @@ function ContractsPageInner() {
         />
       ),
     };
-    return [selectColumn, ...makeColumns((tag) => setTagFilter(tag))];
-  }, [allSelected, pageIds, selected, toggleAll, toggleRow]);
+    return [
+      selectColumn,
+      ...makeColumns((tag) => {
+        setTagFilter(tag);
+        updateUrlParams((params) => {
+          params.set("tag", tag);
+          params.delete("cursor");
+        });
+      }),
+    ];
+  }, [allSelected, pageIds, selected, toggleAll, toggleRow, updateUrlParams]);
 
   // ---------------------------------------------------------------------------
   // Render
@@ -798,7 +823,14 @@ function ContractsPageInner() {
             id="contracts-search"
             type="search"
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(e) => {
+              const value = e.target.value;
+              setSearch(value);
+              updateUrlParams((params) => {
+                if (value) params.set("q", value);
+                else params.delete("q");
+              }, true);
+            }}
             placeholder="Search by alias or contract ID…"
             aria-label="Search contracts"
             className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-card)] px-4 py-2.5 text-sm text-[var(--color-text-primary)] placeholder-[var(--color-text-secondary)] focus:border-[var(--color-accent)] focus:outline-none"
@@ -807,7 +839,15 @@ function ContractsPageInner() {
             id="contracts-tag-filter"
             type="search"
             value={tagFilter}
-            onChange={(e) => setTagFilter(e.target.value)}
+            onChange={(e) => {
+              const value = e.target.value;
+              setTagFilter(value);
+              updateUrlParams((params) => {
+                if (value) params.set("tag", value);
+                else params.delete("tag");
+                params.delete("cursor");
+              }, true);
+            }}
             placeholder="Filter by tag…"
             aria-label="Filter contracts by tag"
             className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-card)] px-4 py-2.5 text-sm text-[var(--color-text-primary)] placeholder-[var(--color-text-secondary)] focus:border-[var(--color-accent)] focus:outline-none sm:max-w-xs"
@@ -909,7 +949,7 @@ function ContractsPageInner() {
         {!loading && contracts.length > 0 && (
           <div className="mt-4 flex items-center justify-between">
             <span className="text-xs text-[var(--color-text-secondary)]">
-              Page {cursorIndex + 1}
+              Page {cursorStack.length + 1}
             </span>
             <div className="flex gap-2">
               <button

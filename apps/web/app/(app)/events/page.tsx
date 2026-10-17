@@ -1,24 +1,19 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { MonoId } from "@sorolens/ui";
 import { listAllEvents } from "@/lib/api";
 import { networkFilter, useNetwork } from "@/lib/network";
 import { TableSkeleton } from "@/components/Skeleton";
 import {
-  FIRST_PAGE,
-  currentCursor,
   dateRangeError,
   dateRangeToBounds,
   formatEventData,
-  pageNumber,
-  popPage,
   previewEventData,
-  pushPage,
-  type CursorHistory,
 } from "@/lib/eventsExplorer";
 import type { EventType, GlobalEvent } from "@/lib/types";
+import { useUrlSearchParams } from "@/hooks/useUrlSearchParams";
 
 const PAGE_SIZE = 25;
 
@@ -121,16 +116,35 @@ function EventRow({ event }: { event: GlobalEvent }) {
 
 export default function EventsExplorerPage() {
   const { network } = useNetwork();
-  const [draft, setDraft] = useState<Filters>(NO_FILTERS);
-  const [filters, setFilters] = useState<Filters>(NO_FILTERS);
-  const [history, setHistory] = useState<CursorHistory>(FIRST_PAGE);
+  const [searchParams, updateSearchParams] = useUrlSearchParams();
+  const search = searchParams.toString();
+  const previousSearch = useRef(search);
+  const readFilters = (params: URLSearchParams): Filters => ({
+    contractId: params.get("contract_id") ?? "",
+    type: (params.get("type") as Filters["type"]) ?? "",
+    from: params.get("from") ?? "",
+    to: params.get("to") ?? "",
+  });
+  const [draft, setDraft] = useState<Filters>(() => readFilters(searchParams));
+  const [filters, setFilters] = useState<Filters>(() =>
+    readFilters(searchParams)
+  );
+  const cursorHistory = searchParams.getAll("cursor");
+  const cursor = cursorHistory[cursorHistory.length - 1] ?? "";
+  const currentPage = cursorHistory.length + 1;
   const [events, setEvents] = useState<GlobalEvent[]>([]);
   const [nextCursor, setNextCursor] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
 
-  const cursor = currentCursor(history);
+  useEffect(() => {
+    if (previousSearch.current === search) return;
+    previousSearch.current = search;
+    const next = readFilters(new URLSearchParams(search));
+    setFilters(next);
+    setDraft(next);
+  }, [search]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -164,9 +178,12 @@ export default function EventsExplorerPage() {
   }, [cursor, filters, network, reloadKey]);
 
   // A network switch changes the result set, so start from the first page.
+  const previousNetwork = useRef(network);
   useEffect(() => {
-    setHistory(FIRST_PAGE);
-  }, [network]);
+    if (previousNetwork.current === network) return;
+    previousNetwork.current = network;
+    updateSearchParams((params) => params.delete("cursor"), true);
+  }, [network, updateSearchParams]);
 
   const rangeError = dateRangeError(draft.from, draft.to);
   const hasFilters = JSON.stringify(filters) !== JSON.stringify(NO_FILTERS);
@@ -175,16 +192,31 @@ export default function EventsExplorerPage() {
     (e: React.FormEvent) => {
       e.preventDefault();
       if (rangeError) return;
-      setFilters({ ...draft, contractId: draft.contractId.trim() });
-      setHistory(FIRST_PAGE);
+      const next = { ...draft, contractId: draft.contractId.trim() };
+      setFilters(next);
+      updateSearchParams((params) => {
+        for (const [key, value] of Object.entries({
+          contract_id: next.contractId,
+          type: next.type,
+          from: next.from,
+          to: next.to,
+        })) {
+          if (value) params.set(key, value);
+          else params.delete(key);
+        }
+        params.delete("cursor");
+      });
     },
-    [draft, rangeError]
+    [draft, rangeError, updateSearchParams]
   );
 
   const clearFilters = () => {
     setDraft(NO_FILTERS);
     setFilters(NO_FILTERS);
-    setHistory(FIRST_PAGE);
+    updateSearchParams((params) => {
+      for (const key of ["contract_id", "type", "from", "to", "cursor"])
+        params.delete(key);
+    });
   };
 
   return (
@@ -361,25 +393,37 @@ export default function EventsExplorerPage() {
         </div>
       )}
 
-      {!error && (events.length > 0 || pageNumber(history) > 1) && (
+      {!error && (events.length > 0 || currentPage > 1) && (
         <nav
           className="flex items-center justify-between"
           aria-label="Pagination"
         >
           <button
             type="button"
-            onClick={() => setHistory(popPage)}
-            disabled={loading || pageNumber(history) === 1}
+            onClick={() =>
+              updateSearchParams((params) => {
+                const cursors = params.getAll("cursor");
+                params.delete("cursor");
+                cursors
+                  .slice(0, -1)
+                  .forEach((value) => params.append("cursor", value));
+              })
+            }
+            disabled={loading || currentPage === 1}
             className={buttonClass}
           >
             ← Previous
           </button>
           <span className="text-xs text-[var(--color-text-secondary)]">
-            Page {pageNumber(history)}
+            Page {currentPage}
           </span>
           <button
             type="button"
-            onClick={() => setHistory((h) => pushPage(h, nextCursor))}
+            onClick={() =>
+              updateSearchParams((params) =>
+                params.append("cursor", nextCursor)
+              )
+            }
             disabled={loading || !nextCursor}
             className={buttonClass}
           >

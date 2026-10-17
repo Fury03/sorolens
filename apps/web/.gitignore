@@ -3,6 +3,7 @@ node_modules
 tsconfig.tsbuildinfo
 /test-results
 /playwright-report
+/.lighthouseci
 
 # next-pwa generated files
 public/sw.js*

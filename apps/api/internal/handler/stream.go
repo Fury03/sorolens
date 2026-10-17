@@ -22,7 +22,10 @@ type StreamMessage struct {
 type StreamHub struct {
 	mu          sync.RWMutex
 	subscribers map[chan StreamMessage]string // client channel -> contract_id filter ("" for all)
+	history     []StreamMessage
 }
+
+const streamReplayLimit = 500
 
 // NewStreamHub creates an initialized StreamHub.
 func NewStreamHub() *StreamHub {
@@ -34,10 +37,26 @@ func NewStreamHub() *StreamHub {
 // Subscribe registers a client channel for events on a specific contract (or all if contractID is "").
 // It returns the receive channel and an unsubscribe cleanup function.
 func (h *StreamHub) Subscribe(contractID string) (chan StreamMessage, func()) {
+	return h.SubscribeAfter(contractID, "")
+}
+
+// SubscribeAfter registers a subscriber and queues events published after lastEventID.
+func (h *StreamHub) SubscribeAfter(contractID, lastEventID string) (chan StreamMessage, func()) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	ch := make(chan StreamMessage, 64)
+	ch := make(chan StreamMessage, streamReplayLimit+64)
+	if lastEventID != "" {
+		found := false
+		for _, msg := range h.history {
+			if found && (contractID == "" || contractID == msg.ContractID) {
+				ch <- msg
+			}
+			if msg.Event != nil && msg.Event.ID == lastEventID {
+				found = true
+			}
+		}
+	}
 	h.subscribers[ch] = contractID
 
 	unsubscribe := func() {
@@ -54,8 +73,15 @@ func (h *StreamHub) Subscribe(contractID string) (chan StreamMessage, func()) {
 
 // Publish broadcasts a message to all matching subscribers.
 func (h *StreamHub) Publish(msg StreamMessage) {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	if msg.Event != nil {
+		h.history = append(h.history, msg)
+		if len(h.history) > streamReplayLimit {
+			h.history = append([]StreamMessage(nil), h.history[len(h.history)-streamReplayLimit:]...)
+		}
+	}
 
 	for ch, contractID := range h.subscribers {
 		if contractID == "" || contractID == msg.ContractID {
@@ -115,7 +141,11 @@ func (h *Handler) StreamEventsSSE(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush()
 
-	ch, unsubscribe := h.Hub().Subscribe(contractID)
+	lastEventID := r.Header.Get("Last-Event-ID")
+	if lastEventID == "" {
+		lastEventID = r.URL.Query().Get("last_event_id")
+	}
+	ch, unsubscribe := h.Hub().SubscribeAfter(contractID, lastEventID)
 	defer unsubscribe()
 
 	heartbeatTicker := time.NewTicker(30 * time.Second)
@@ -146,6 +176,9 @@ func (h *Handler) StreamEventsSSE(w http.ResponseWriter, r *http.Request) {
 			data, err := json.Marshal(msg)
 			if err != nil {
 				continue
+			}
+			if msg.Event != nil {
+				fmt.Fprintf(w, "id: %s\n", msg.Event.ID)
 			}
 			fmt.Fprintf(w, "data: %s\n\n", data)
 			flusher.Flush()
