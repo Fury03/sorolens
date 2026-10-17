@@ -9,7 +9,6 @@
  *   Web Push at any time.
  */
 import Link from "next/link";
-import Image from "next/image";
 import { SWRConfig } from "swr";
 import { NetworkProvider } from "@/lib/network";
 import { swrConfig } from "@/lib/swr";
@@ -34,14 +33,7 @@ function AppLayoutInner({ children }: { children: React.ReactNode }) {
             href="/"
             className="flex items-center gap-2 text-2xl font-bold tracking-tight"
           >
-            <Image
-              src="/logo.svg"
-              alt=""
-              width={32}
-              height={32}
-              className="h-8 w-8"
-              aria-hidden
-            />
+            <img src="/logo.svg" alt="" className="h-8 w-8" aria-hidden />
             Sorolens
           </Link>
           <div className="flex flex-wrap items-center gap-4">
@@ -69,6 +61,12 @@ function AppLayoutInner({ children }: { children: React.ReactNode }) {
                 className="text-[var(--color-text-secondary)] transition-colors hover:text-[var(--color-text-primary)]"
               >
                 Watchdog
+              </Link>
+              <Link
+                href="/watchdog/reports"
+                className="text-[var(--color-text-secondary)] transition-colors hover:text-[var(--color-text-primary)]"
+              >
+                Reports
               </Link>
               <Link
                 href="/groups"
@@ -104,6 +102,12 @@ function AppLayoutInner({ children }: { children: React.ReactNode }) {
         <main>{children}</main>
         <footer className="mt-12 border-t border-[var(--color-border)] pt-6 text-sm text-[var(--color-text-secondary)]">
           Built for the Stellar developer community.
+          <Link
+            href="/status"
+            className="ml-3 hover:text-[var(--color-text-primary)]"
+          >
+            System status
+          </Link>
           <LastUpdated />
         </footer>
       </div>

@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import type { ContractEvent } from "@/lib/types";
-import { getContractEvents, getRecentEvents } from "@/lib/api";
+import { getContractEvents } from "@/lib/api";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
 
@@ -81,11 +81,6 @@ export function useEventStream(
             if (!isCancelled && data.events) {
               data.events.forEach((ev) => addEvent(ev));
             }
-          } else {
-            const data = await getRecentEvents(50);
-            if (!isCancelled && data.events) {
-              data.events.forEach((ev) => addEvent(ev));
-            }
           }
         } catch {
           // ignore polling errors
@@ -105,9 +100,6 @@ export function useEventStream(
     const searchParams = new URLSearchParams();
     if (contractId) {
       searchParams.set("contract_id", contractId);
-    }
-    if (lastEventIdRef.current) {
-      searchParams.set("last_event_id", lastEventIdRef.current);
     }
     const qs = searchParams.toString();
     const url = `${API_URL}/api/v1/stream/events${qs ? "?" + qs : ""}`;
@@ -132,7 +124,7 @@ export function useEventStream(
         const data = JSON.parse(e.data);
         if (data.type === "event" && data.event) {
           addEvent(data.event);
-          lastEventIdRef.current = e.lastEventId || data.event.id;
+          lastEventIdRef.current = data.event.id;
         } else if (data.type === "alert" && data.alert) {
           if (onAlertRef.current) {
             onAlertRef.current(data.alert);

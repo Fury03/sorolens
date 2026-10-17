@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import Image from "next/image";
 import {
   contractReportUrl,
   contractSLABadgeUrl,
@@ -19,6 +18,10 @@ const MONTHS_SHOWN = 12;
 
 function currentMonth(): string {
   return new Date().toISOString().slice(0, 7);
+}
+
+function isValidMonth(value: string | null): value is string {
+  return value !== null && /^\d{4}-(0[1-9]|1[0-2])$/.test(value);
 }
 
 function formatSeconds(seconds: number): string {
@@ -198,6 +201,30 @@ export default function SLAReportsPage() {
   const [contracts, setContracts] = useState<
     { contract_id: string; name: string }[]
   >([]);
+  const [queryReady, setQueryReady] = useState(false);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    setContractId(params.get("contract")?.trim() ?? "");
+    const linkedMonth = params.get("month");
+    if (isValidMonth(linkedMonth)) setMonth(linkedMonth);
+    setQueryReady(true);
+  }, []);
+
+  useEffect(() => {
+    if (!queryReady) return;
+    const params = new URLSearchParams(window.location.search);
+    if (contractId) params.set("contract", contractId);
+    else params.delete("contract");
+    if (isValidMonth(month)) params.set("month", month);
+    else params.delete("month");
+    const query = params.toString();
+    window.history.replaceState(
+      null,
+      "",
+      `${window.location.pathname}${query ? `?${query}` : ""}`
+    );
+  }, [contractId, month, queryReady]);
 
   useEffect(() => {
     let cancelled = false;
@@ -305,7 +332,10 @@ export default function SLAReportsPage() {
             id="sla-month"
             type="month"
             value={month}
-            onChange={(e) => setMonth(e.target.value || currentMonth())}
+            onChange={(e) => {
+              const value = e.target.value;
+              if (isValidMonth(value)) setMonth(value);
+            }}
             className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-card)] px-3 py-2.5 text-sm text-[var(--color-text-primary)] focus:border-[var(--color-accent)] focus:outline-none"
           />
         </div>
@@ -340,6 +370,22 @@ export default function SLAReportsPage() {
             }`}
           >
             Export PDF
+          </a>
+          <a
+            id="sla-export-json"
+            href={
+              contractId
+                ? contractReportUrl(contractId, month, "json")
+                : undefined
+            }
+            aria-disabled={!contractId}
+            className={`rounded-lg border border-[var(--color-border)] px-4 py-2.5 text-sm font-medium transition-colors ${
+              contractId
+                ? "text-[var(--color-text-secondary)] hover:border-[var(--color-accent)] hover:text-[var(--color-text-primary)]"
+                : "pointer-events-none opacity-40"
+            }`}
+          >
+            Export JSON
           </a>
         </div>
       </div>
@@ -455,13 +501,12 @@ export default function SLAReportsPage() {
                 Embed this month&apos;s badge
               </h2>
               {/* A live preview: the URL is the deliverable, so show the result. */}
-              <Image
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
                 src={badgeUrl}
                 alt={`SLA badge for ${selected.month}`}
-                width={120}
                 height={20}
                 className="mb-3"
-                unoptimized
               />
               <label
                 htmlFor="sla-badge-snippet"

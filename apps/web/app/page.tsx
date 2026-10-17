@@ -1,5 +1,4 @@
 import Link from "next/link";
-import Image from "next/image";
 import { LiveStats } from "@/components/LiveStats";
 
 const features = [
@@ -50,14 +49,7 @@ export default function HomePage() {
             href="/"
             className="flex items-center gap-2 text-xl font-bold tracking-tight"
           >
-            <Image
-              src="/logo.svg"
-              alt=""
-              width={28}
-              height={28}
-              className="h-7 w-7"
-              aria-hidden
-            />
+            <img src="/logo.svg" alt="" className="h-7 w-7" aria-hidden />
             Sorolens
           </Link>
           <div className="flex items-center gap-4 text-sm">
